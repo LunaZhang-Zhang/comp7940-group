@@ -1,31 +1,23 @@
 from telegram import Update
 from telegram.ext import (Updater, CommandHandler, MessageHandler, Filters,
                           CallbackContext)
+import configparser
 import logging
-import os
 from ChatGPT_HKBU import HKBU_ChatGPT
 from pymongo import MongoClient
 from typing import Optional
-
-# 全局变量
-global mongo_client, db, chatgpt
-
-# 从环境变量读取配置
-TELEGRAM_TOKEN = os.environ['TELEGRAM_ACCESS_TOKEN']
-MONGODB_CONN_STRING = os.environ['MONGODB_CONN_STRING']
-MONGODB_DB_NAME = os.environ['MONGODB_DB_NAME']
-MONGODB_SHARD_KEY = os.environ.get('MONGODB_SHARD_KEY', 'test')  # 默认分片键为 test
-
-CHATGPT_BASE_URL = os.environ['CHATGPT_BASICURL']
-CHATGPT_MODEL = os.environ['CHATGPT_MODELNAME']
-CHATGPT_API_VERSION = os.environ['CHATGPT_APIVERSION']
-CHATGPT_TOKEN = os.environ['CHATGPT_ACCESS_TOKEN']
-
+from bson import ObjectId
 
 # Global variables
 global mongo_client, db, config, chatgpt
 
+
 def main():
+    # Load configuration
+    global config, mongo_client, db, chatgpt
+    config = configparser.ConfigParser()
+    config.read('config.ini')
+
     # Initialize logging
     logging.basicConfig(
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -33,21 +25,20 @@ def main():
     )
 
     # Initialize MongoDB connection
-    global mongo_client, db
     try:
         mongo_client = MongoClient(
-            MONGODB_CONN_STRING,
+            config['MONGODB']['CONN_STRING'],
             serverSelectionTimeoutMS=5000
         )
-        mongo_client.server_info()  # 测试连接
-        db = mongo_client[MONGODB_DB_NAME]
-        logging.info(f"成功连接MongoDB，分片键字段: {MONGODB_SHARD_KEY}")
+        mongo_client.server_info()  # Test connection
+        db = mongo_client[config['MONGODB']['DB_NAME']]
+        logging.info(f"Successfully connected to MongoDB. Shard key field: {config['MONGODB']['SHARD_KEY_FIELD']}")
     except Exception as e:
-        logging.error(f"MongoDB连接失败: {e}")
+        logging.error(f"MongoDB connection failed: {e}")
         raise
 
     # Initialize Telegram Bot
-    updater = Updater(token=TELEGRAM_TOKEN, use_context=True)
+    updater = Updater(token=config['TELEGRAM']['ACCESS_TOKEN'], use_context=True)
     dispatcher = updater.dispatcher
 
     # Register command handlers
@@ -56,13 +47,7 @@ def main():
     dispatcher.add_handler(CommandHandler("hello", hello))
 
     # Initialize ChatGPT
-    global chatgpt
-    chatgpt = HKBU_ChatGPT(
-        base_url=CHATGPT_BASE_URL,
-        model=CHATGPT_MODEL,
-        api_version=CHATGPT_API_VERSION,
-        access_token=CHATGPT_TOKEN
-    )
+    chatgpt = HKBU_ChatGPT()
     chatgpt_handler = MessageHandler(Filters.text & (~Filters.command), equip_chatgpt)
     dispatcher.add_handler(chatgpt_handler)
 
@@ -72,20 +57,23 @@ def main():
     updater.idle()
 
 
-
 def help_command(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text(
-        '🌟 Available commands:\n'
-        '/add <keyword> - Count statistics\n'
-        '/hello <name> - Greet someone\n'
-        '/help - Show help\n\n'
-        '💡 Features:\n'
-        '1. Send "recommend activities" to get interest-based suggestions\n'
-        '2. Send "find partners" to find partners with shared interests'
-    )
+    try:
+        update.message.reply_text(
+            '🌟 Available commands:\n'
+            '/add <keyword> - Count statistics\n'
+            '/hello <name> - Greet someone\n'
+            '/help - Show help\n\n'
+            '💡 Features:\n'
+            '1. Send "recommend activities" to get interest-based suggestions\n'
+            '2. Send "find partners" to find partners with shared interests'
+        )
+    except Exception as e:
+        logging.error(f"Help command error:{e}")
 
 
 def add(update: Update, context: CallbackContext) -> None:
+    global config, mongo_client, db, chatgpt
     try:
         if not context.args:
             raise ValueError("Missing keyword")
@@ -116,6 +104,7 @@ def add(update: Update, context: CallbackContext) -> None:
 
 
 def hello(update: Update, context: CallbackContext) -> None:
+    global config, mongo_client, db, chatgpt
     try:
         name = ' '.join(context.args) or 'friend'
         update.message.reply_text(f'👋 Hello, {name}!')
@@ -124,6 +113,7 @@ def hello(update: Update, context: CallbackContext) -> None:
 
 
 def equip_chatgpt(update: Update, context: CallbackContext):
+    global config, mongo_client, db, chatgpt
     try:
         user_id = update.effective_user.id
         message_text = update.message.text.strip().lower()
@@ -211,6 +201,7 @@ def equip_chatgpt(update: Update, context: CallbackContext):
 
 
 def match_users(update: Update, context: CallbackContext):
+    global config, mongo_client, db, chatgpt
     try:
         shard_key = config['MONGODB']['SHARD_KEY_FIELD']
 
